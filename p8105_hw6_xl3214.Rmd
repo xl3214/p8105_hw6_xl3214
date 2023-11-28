@@ -1,0 +1,127 @@
+---
+title: "p8105_hw6_xl3214"
+author: "Xuan Lu"
+date: "`r Sys.Date()`"
+output: github_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo = FALSE}
+library(dplyr)
+library(purrr)
+library(ggplot2)
+```
+
+
+## Problem 1: The Homocide Dataset by Washington Post
+
+### Step 1: Data Import and Preparation for Analysis
+
+```{r Data import}
+q1_raw <- read.csv(file = "https://raw.githubusercontent.com/washingtonpost/data-homicides/master/homicide-data.csv")
+```
+
+The raw data has `r nrol(q1_raw)` variables and `r nrow(q1_raw)` observations. Variables include: *`r colnames(q1_raw)`*.
+
+```{r Data cleaning and manipulation for analysis}
+q1_for_analysis <- q1_raw |>
+  # Create city_state variable in the format of "City, State"
+  mutate(city_state = paste(city, state, sep = ", "), 
+         victim_race = as.factor(victim_race), 
+         victim_sex = as.factor(victim_sex), 
+         victim_age = as.factor(victim_age), 
+         disposition = as.factor(disposition)) |>
+  # Create binary variable indicating whether the homicide is solved
+  mutate(resolved = factor(ifelse(disposition == "Closed by arrest", 1, 0),
+                         levels = c(0, 1),
+                         labels = c("No", "Yes"),
+                         ordered = TRUE)) |>
+  # Omit cities Dallas, TX; Phoenix, AZ; and Kansas City, MO – these don’t report victim race
+  # Omit Tulsa, AL – this is a data entry mistake
+  filter(!city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL")) |>
+  # Limit analysis to victim_race is white or black
+  filter(victim_race %in% c("White", "Black")) |>
+  # victim_age needs to be numeric
+  mutate(victim_age = as.numeric(victim_age))
+```
+
+After data cleaning and validation, which excludes cities Dallas, TX; Phoenix, AZ; Kansas City, MO; and Tulsa, AL, and limiting the victim_race to only black or white, the dataset pertained to analysis stage includes `r ncol(q1_for_analysis)` variables and `r nrow(q1_for_analysis)` observations. 
+
+### Step 2: Fit Logistic Regression for Baltimore, MD
+
+Fit a logistic regression model for the city of Baltimore, MD using `glm()`, with the binary variable indicating whether the homicide is solved as the outcome, and victim age, sex, and race as predictors.
+
+```{r glm model}
+baltimore_data <- q1_for_analysis |> filter(city_state == "Baltimore, MD")
+# glm modeling
+model_baltimore <- glm(resolved ~ victim_age + victim_sex + victim_race, 
+                       data = baltimore_data, family = "binomial")
+```
+
+
+### Step 3: Extract Odds Ratios and Confidence Intervals
+
+Use `broom::tidy()` to extract the model estimates and confidence intervals, focusing on the adjusted odds ratio for male vs. female victims.
+
+```{r}
+baltimore_model_output <- broom::tidy(model_baltimore, conf.int = TRUE)
+baltimore_or <- baltimore_model_output |>
+  filter(term == "victim_sexMale") |>
+  mutate(OR = exp(estimate),
+         lower_ci = exp(conf.low),
+         upper_ci = exp(conf.high)) |>
+  select(term, OR, lower_ci, upper_ci, p.value)
+```
+
+The odds of the homicide being solved for male victims is estimated to be `r pull(baltimore_or, OR)` times that of female victims, adjusting for victim age and race. A reasonable (alpha = 0.05)
+range of estimates for the true OR is between `r pull(baltimore_or, lower_ci)` and `r pull(baltimore_or, upper_ci)`. 
+The p-value is `r pull(baltimore_or, p.value)`, indicating `r if (pull(baltimore_or, p.value) < 0.05) "a statistically significant association between victim's sex and the resolution of the homicide" else "the association between victim's sex and the resolution of the homicide is not statistically significant"`.
+
+### Step 4: Logistic Regression for Each City and Dataframe with Estimated ORs and CIs
+
+```{r}
+ors_and_cis <- q1_for_analysis %>%
+  split(.$city_state) %>%
+  map_df(
+    ~ broom::tidy(glm(resolved ~ victim_age + victim_sex + victim_race, data = .x, family = "binomial"), conf.int = TRUE) %>%
+      filter(term == "victim_sexMale") %>%
+      mutate(OR = exp(estimate),
+             lower_ci = exp(conf.low),
+             upper_ci = exp(conf.high)),
+    .id = "city_state"
+  ) |>
+  select(city_state, term, OR, lower_ci, upper_ci, p.value)
+```
+
+
+### Step 6: Plotting the Results
+
+```{r, fig.height=10, fig.width=8}
+ggplot(ors_and_cis, aes(x = reorder(city_state, OR), y = OR)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = lower_ci, ymax = upper_ci), width = 0.2) +
+  coord_flip() +
+  labs(x = "City", y = "Odds Ratio (Male vs Female Victims)",
+       title = "Adjusted Odds Ratios for Solving Homicides by City")
+```
+
+
+## Problem 2: NYC Central Park Weather
+
+```{r}
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+```
+
