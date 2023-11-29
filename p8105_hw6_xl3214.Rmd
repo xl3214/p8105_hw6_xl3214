@@ -110,6 +110,7 @@ model_all_cities |>
   slice(1:5) |>
   knitr::kable(digits = 3)
 ```
+
 Based on the output table, Albuquerque, NM has the highest odds ratio when comparing victims whose sex is male to those whose sex is female. With a p-value of 0.139, however, we do not have sufficient evidence to conclude that the odds of resolving the homicide is statistically higher among males than females in Albuquerque, NM, after adjusting for victim age and race. 
 
 ### Step 4: Plotting the Results
@@ -361,4 +362,101 @@ dwtest(stepwise_model)
 3. **Homoscedasticity:** The Residuals vs Fitted plot shows a relatively stable variance of residuals as fitted values increase. There is a slight funnel shape observed, but it is very minimal and should not be of severe concern.
 4. **Normal distribution of residuals:** Q-Q plot shows that the residuals aligns with the line overall with slight deviation at the ends, indicating that the residuals are approximately normally distributed with some potential extreme values, but are not warranting violation of residual normal distribution assumption. 
 5. **Multicollinearity:** VIF values greater than 10 warrants concerns of multicollinearity. None of the VIF values for my model are greater than 10, indicating no serious multicollinearity issues.
+
+### Model Comparison
+
+I will compare my model to two others:
+
+- One using length at birth and gestational age as predictors (main effects only).
+- One using head circumference, length, sex, and all interactions (including the three-way interaction) between these.
+
+**1. Comparison using AIC, BIC, R-square, and residual standard errors**
+
+```{r q3-model comparison}
+# First model using length at birth and gestational age as predictors
+model_length_ga <- lm(bwt ~ blength + gaweeks, data = q3_for_analysis)
+
+# Second model using head circumference, length, sex, and all interactions
+model_head_length_sex_interactions <- lm(bwt ~ bhead * blength * babysex, data = q3_for_analysis)
+
+# Compare the models based on AIC, BIC, and adjusted R-squared
+summary(model_length_ga)
+summary(model_head_length_sex_interactions)
+
+# Extracting AIC and BIC for comparison
+AIC(model_length_ga, model_head_length_sex_interactions)
+AIC(stepwise_model)
+BIC(model_length_ga, model_head_length_sex_interactions)
+BIC(stepwise_model)
+
+# Compare the adjusted R-squared values
+model_length_ga_sum <- summary(model_length_ga)
+adj_r2_length_ga <- model_length_ga_sum[["adj.r.squared"]]
+
+adj_r2_head_length_sex_interactions_sum <- summary(model_head_length_sex_interactions)
+adj_r2_head_length_sex_interactions <- adj_r2_head_length_sex_interactions_sum[["adj.r.squared"]]
+
+adj_r2_current_sum <- summary(stepwise_model)
+adj_r2_current <- adj_r2_current_sum[["adj.r.squared"]]
+
+# Compare residual standard errors
+rse_length_ga_sum <- summary(model_length_ga)
+rse_length_ga <- rse_length_ga_sum[["sigma"]]
+
+rse_head_length_sex_interactions_sum <- summary(model_head_length_sex_interactions)
+rse_head_length_sex_interactions <- rse_head_length_sex_interactions_sum[["sigma"]]
+
+rse_current_sum <- summary(stepwise_model)
+rse_current <- rse_current_sum[["sigma"]]
+
+# Output Comparison Table
+comparison_df <- tibble(
+  Model = c("Length + GA", "Head + Length + Sex + Interactions", "Current Stepwise Model"),
+  AIC = c(AIC(model_length_ga), AIC(model_head_length_sex_interactions), AIC(stepwise_model)),
+  BIC = c(BIC(model_length_ga), BIC(model_head_length_sex_interactions), BIC(stepwise_model)),
+  Adj_R2 = c(adj_r2_length_ga, adj_r2_head_length_sex_interactions, adj_r2_current),
+  Residual_SE = c(rse_length_ga, rse_head_length_sex_interactions, rse_current)
+)
+comparison_df |> knitr::kable()
+```
+
+**2. Comparison using cross-validation**
+
+```{r q3-cross-validation-comparison}
+library(tidyverse)
+library(modelr)
+
+# Set a seed for reproducibility
+set.seed(123)
+
+# Create cross-validation folds
+cv_folds <- crossv_mc(q3_for_analysis, 100) # 100 Monte Carlo resamples
+
+# Function to fit a model and return RMSE
+get_rmse <- function(model_formula, train_data, test_data) {
+  model <- lm(model_formula, data = train_data)
+  pred <- predict(model, newdata = test_data)
+  # Explicitly use data.frame method to access 'bwt' column
+  rmse <- sqrt(mean((test_data[["bwt"]] - pred)^2))
+  return(rmse)
+}
+
+# Cross-validate models
+rmse_length_ga <- map_dbl(cv_folds, ~get_rmse(bwt ~ blength + gaweeks, .x$train, .x$test))
+rmse_head_length_sex_interactions <- map_dbl(cv_folds, ~get_rmse(bwt ~ bhead * blength * babysex, .x$train, .x$test))
+rmse_stepwise <- map_dbl(cv_folds, ~get_rmse(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + mheight + mrace + parity + ppwt + smoken, .x$train, .x$test))
+
+# Calculate mean RMSE for each model
+mean_rmse_length_ga <- mean(rmse_length_ga)
+mean_rmse_head_length_sex_interactions <- mean(rmse_head_length_sex_interactions)
+mean_rmse_stepwise <- mean(rmse_stepwise)
+
+# Output Comparison Table
+comparison_RMSE_df <- tibble(
+  Model = c("Length + GA", "Head + Length + Sex + Interactions", "Current Stepwise Model"),
+  Mean_RMSE = c(mean_rmse_length_ga, mean_rmse_head_length_sex_interactions, mean_rmse_stepwise)
+)
+
+comparison_RMSE_df |> knitr::kable()
+```
 
