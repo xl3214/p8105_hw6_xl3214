@@ -11,14 +11,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r load necessary packages, echo=FALSE, message=FALSE}
 library(dplyr)
-library(tidyr)
 library(purrr)
-library(forcats)
 library(ggplot2)
+library(tidyverse)
 library(broom)
-library(modelr)
-library(car)
-library(lmtest)
 ```
 
 ## Problem 1: The Homocide Dataset by Washington Post
@@ -137,14 +133,6 @@ model_all_cities |>
 
 ## Problem 2: NYC Central Park Weather
 
-In this problem, bootstrap is being used to understand the distribution and confidence intervals of certain statistical quantities derived from a linear regression model. These quantities are R-square and log(β_tmin x β_prcp). Since the exact distribution of these quantities might not be easily derivable from theoretical principles, especially when dealing with real-world data like weather statistics, bootstrapping provides a way to empirically estimate their distribution.
-
-Meaning of R-square: In regression analysis, R-square is a measure of how well the regression predictions approximate the real data points. In this case, how well tmax can be predicted from tmin and prcp. A R-square close to 1 indicates that the regression model explains a large portion of the variance in the response variable.
-
-Meaning of log(β_tmin x β_prcp): The coefficients are likely the estimated coefficients for tmin and prcp in predicting tmax. The product β_tmin x β_prcp would be an interaction term, and taking the logarithm of this product could be a way to interpret the combined effect of these predictors on the logarithmic scale (therefore assess interaction on multiplicative scale).
-
-By using bootstrapping to estimate the distribution of these quantities, we can gain insights into the uncertainty and variability associated with our regression model's predictions and the interaction of the predictors in the model. 
-
 ```{r Q2-retrieve data}
 weather_df = 
   rnoaa::meteo_pull_monitors(
@@ -180,18 +168,16 @@ bootstrap_sample <- function(df) {
   tidy_stats <- tidy(fit)
   
   # Extract R-squared
-  r_squared <- pull(glance_stats, r.squared)
+  r_squared <- glance_stats[["r.squared"]]
   
   # Compute the log product of tmin and prcp coefficients
   coef_tmin <- tidy_stats |>
-  filter(term == "tmin") |>
-  pull(estimate)
-
+    filter(term == "tmin") |>
+    pull(estimate)
   coef_prcp <- tidy_stats |>
-  filter(term == "prcp") |>
-  pull(estimate)
-  
-  # Handle cases where the product might be non-positive using log1p, which calculates log(1 + x)
+    filter(term == "prcp") |>
+    pull(estimate)
+  # Handle cases where the product might be non-positive
   log_product <- ifelse(coef_tmin * coef_prcp > 0, log(coef_tmin * coef_prcp), NA)
   
   return(list(r_squared = r_squared, log_product = log_product))
@@ -318,6 +304,13 @@ For model predictor selection, I will employ a data-driven model-building proces
 
 AIC is a measure of the relative quality of statistical models for a given set of data. It estimates the information loss when using a model to represent the process that generated the data. It deals with the trade-off between the goodness of fit of the model and the complexity of the model. A lower AIC value indicates a better model. AIC is calculated as: `AIC=2k−2ln(L)`, where `k` is the number of parameters in the model and `L` is the maximum value of the likelihood function for the model. During model selection, the goal is to minimize the AIC; the model with the lowest AIC is generally preferred.
 
+```{r q3-load packages, echo=FALSE, message=FALSE}
+library(modelr)
+library(car)
+library(lmtest)
+```
+
+
 ```{r q3-predictor selection}
 full_model <- lm(bwt ~ ., data = q3_for_analysis)
 stepwise_model <- step(full_model, direction = "both")
@@ -340,7 +333,7 @@ Linear regression has many assumptions:
 4. **Normal distribution of residuals:** A Q-Q plot of residuals will be used to assess whether the residuals are normally distributed. If points fall approximately along a straight line, the residuals are normally distributed.
 5. Additionally, with multiple predictors, potential **multicollinearity** also needs to be checked, as it can affect the stability and interpretation of regression coefficients. I will use the Variance Inflation Factor (VIF) and Durbin-Watson test to check for multicollinearity. 
 
-```{r}
+```{r q3-model diagnostics}
 # Residuals vs Fitted Plot
 augmented_data <- q3_for_analysis |>
   add_predictions(stepwise_model, var = "fitted_values") |>
@@ -368,5 +361,4 @@ dwtest(stepwise_model)
 3. **Homoscedasticity:** The Residuals vs Fitted plot shows a relatively stable variance of residuals as fitted values increase. There is a slight funnel shape observed, but it is very minimal and should not be of severe concern.
 4. **Normal distribution of residuals:** Q-Q plot shows that the residuals aligns with the line overall with slight deviation at the ends, indicating that the residuals are approximately normally distributed with some potential extreme values, but are not warranting violation of residual normal distribution assumption. 
 5. **Multicollinearity:** VIF values greater than 10 warrants concerns of multicollinearity. None of the VIF values for my model are greater than 10, indicating no serious multicollinearity issues.
-
 
