@@ -218,14 +218,16 @@ bootstrap_results <- replicate(5000, bootstrap_sample(weather_df), simplify = FA
 bootstrap_results_df <- do.call(rbind.data.frame, bootstrap_results)
 
 # Histogram of R^2
-hist(bootstrap_results_df[, "r_squared"], main = "Histogram of R^2", xlab = "R^2", breaks = 20, col = 'blue')
+hist(bootstrap_results_df[, "r_squared"], main = "Histogram of R^2", 
+     xlab = "R^2", breaks = 20, col = 'blue')
 
 # QQ-plot of R^2
 qqnorm(bootstrap_results_df[, "r_squared"], main = "QQ-Plot of R^2")
 qqline(bootstrap_results_df[, "r_squared"], col = 'red')
 
 # Histogram of log(beta_tmin * beta_prcp)
-hist(bootstrap_results_df[, "log_product"], main = "Histogram of log(beta_tmin * beta_prcp)", xlab = "log(beta_tmin * beta_prcp)", breaks = 20, col = 'blue')
+hist(bootstrap_results_df[, "log_product"], main = "Histogram of log(beta_tmin * beta_prcp)", 
+     xlab = "log(beta_tmin * beta_prcp)", breaks = 20, col = 'blue')
 
 # QQ-plot of log(beta_tmin * beta_prcp)
 qqnorm(bootstrap_results_df[, "log_product"], main = "QQ-Plot of log(beta_tmin * beta_prcp)")
@@ -241,20 +243,32 @@ Based on the histogram, the distribution of R-square appears to be unimodal and 
 Based on the histogram, the distribution is unimodel and slightly skewed to the left, indicating that the log-transformed product of the coefficients tends to have an inconsistent estimate across bootstrap samples.qq-plot shows apparent deviation from the line at both tails, particularly the lower tail, suggests that the log-transformed product might have a distribution with heavier tails than the normal distribution, indicating some outliers or extreme values.
 
 ```{r Q2-calculate 95% CI}
-# Calculating the 95% confidence intervals for R^2
-r_squared_ci <- quantile(bootstrap_results_df[, "r_squared"], 
-                         probs = c(0.025, 0.975), 
-                         na.rm = TRUE)
+# Calculate mean R-squared and log_product
+mean_r_squared <- mean(bootstrap_results_df[, "r_squared"], na.rm = TRUE)
+mean_log_product <- mean(bootstrap_results_df[, "log_product"], na.rm = TRUE)
 
-# Calculating the 95% confidence intervals for log(beta_tmin * beta_prcp)
-log_product_ci <- quantile(bootstrap_results_df[, "log_product"], 
-                           probs = c(0.025, 0.975), 
-                           na.rm = TRUE)
+# Create a new data frame that contains the estimates and the confidence intervals
+r_squared_results <- data.frame(
+  term = "R-squared",
+  estimate = mean_r_squared,
+  `2.5%` = quantile(bootstrap_results_df[, "r_squared"], probs = 0.025, na.rm = TRUE),
+  `97.5%` = quantile(bootstrap_results_df[, "r_squared"], probs = 0.975, na.rm = TRUE), 
+  row.names = NULL) |>
+  select(term, estimate, X2.5., X97.5.)
 
-# Output the confidence intervals
-print("95% Confidence Interval for R-square")
-r_squared_ci |> knitr::kable()
-print("95% Confidence Interval for log(β_tmin x β_prcp)")
-log_product_ci |> knitr::kable()
+log_product_results <- data.frame(
+  term = "log(β_tmin * β_prcp)",
+  estimate = mean_log_product,
+  `2.5%` = quantile(bootstrap_results_df[, "log_product"], probs = 0.025, na.rm = TRUE),
+  `97.5%` = quantile(bootstrap_results_df[, "log_product"], probs = 0.975, na.rm = TRUE), 
+  row.names = NULL) |>
+  select(term, estimate, X2.5., X97.5.)
+
+# Combine the results into one data frame
+combined_results <- rbind(r_squared_results, log_product_results) |> 
+  rename(lower_ci = X2.5., upper_ci = X97.5.)
+
+# Output the table with knitr::kable
+knitr::kable(caption = "95% Confidence Intervals and Estimates", combined_results)
 ```
 
