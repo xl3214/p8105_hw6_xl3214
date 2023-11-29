@@ -11,10 +11,14 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r load necessary packages, echo=FALSE, message=FALSE}
 library(dplyr)
+library(tidyr)
 library(purrr)
+library(forcats)
 library(ggplot2)
-library(tidyverse)
 library(broom)
+library(modelr)
+library(car)
+library(lmtest)
 ```
 
 ## Problem 1: The Homocide Dataset by Washington Post
@@ -133,6 +137,14 @@ model_all_cities |>
 
 ## Problem 2: NYC Central Park Weather
 
+In this problem, bootstrap is being used to understand the distribution and confidence intervals of certain statistical quantities derived from a linear regression model. These quantities are R-square and log(β_tmin x β_prcp). Since the exact distribution of these quantities might not be easily derivable from theoretical principles, especially when dealing with real-world data like weather statistics, bootstrapping provides a way to empirically estimate their distribution.
+
+Meaning of R-square: In regression analysis, R-square is a measure of how well the regression predictions approximate the real data points. In this case, how well tmax can be predicted from tmin and prcp. A R-square close to 1 indicates that the regression model explains a large portion of the variance in the response variable.
+
+Meaning of log(β_tmin x β_prcp): The coefficients are likely the estimated coefficients for tmin and prcp in predicting tmax. The product β_tmin x β_prcp would be an interaction term, and taking the logarithm of this product could be a way to interpret the combined effect of these predictors on the logarithmic scale (therefore assess interaction on multiplicative scale).
+
+By using bootstrapping to estimate the distribution of these quantities, we can gain insights into the uncertainty and variability associated with our regression model's predictions and the interaction of the predictors in the model. 
+
 ```{r Q2-retrieve data}
 weather_df = 
   rnoaa::meteo_pull_monitors(
@@ -155,39 +167,6 @@ weather_df =
 - **Plot Distributions:** Plot the distributions of the 5000 R-square values and the 5000 log(β_hat_1 * β_hat_2) values.
 - **Calculate Confidence Intervals:** Determine the 2.5th and 97.5th percentiles of the bootstrap estimates to find the 95% confidence intervals for both statistics.
 
-```{r}
-
-
-bootstrap_sample <- function(df) {
-  sample_indices <- sample(seq_len(nrow(df)), size = nrow(df), replace = TRUE)
-  sample_df <- df[sample_indices, ]
-  
-  fit <- lm(tmax ~ tmin + prcp, data = sample_df)
-  glance_stats <- glance(fit)
-  tidy_stats <- tidy(fit)
-  
-  # Extract R-squared
-  r_squared <- glance_stats$r.squared
-  
-  # Compute the log product of tmin and prcp coefficients
-  # Make sure to handle cases where the product might be non-positive
-  coef_tmin <- tidy_stats$estimate[tidy_stats$term == "tmin"]
-  coef_prcp <- tidy_stats$estimate[tidy_stats$term == "prcp"]
-  log_product <- ifelse(coef_tmin * coef_prcp > 0, log(coef_tmin * coef_prcp), NA)
-  
-  return(list(r_squared = r_squared, log_product = log_product))
-}
-
-# Perform the bootstrap sampling and compute statistics for each sample
-bootstrap_results <- replicate(5000, bootstrap_sample(weather_df), simplify = FALSE)
-
-# Convert the list of bootstrap results into a data frame
-bootstrap_results_df <- do.call(rbind.data.frame, bootstrap_results)
-
-
-```
-
-
 ```{r Q2-bootstrap sampling and plot}
 set.seed(123)  # For reproducibility of bootstrap samples
 
@@ -201,12 +180,18 @@ bootstrap_sample <- function(df) {
   tidy_stats <- tidy(fit)
   
   # Extract R-squared
-  r_squared <- glance_stats$r.squared
+  r_squared <- pull(glance_stats, r.squared)
   
   # Compute the log product of tmin and prcp coefficients
-  # Make sure to handle cases where the product might be non-positive
-  coef_tmin <- tidy_stats$estimate[tidy_stats$term == "tmin"]
-  coef_prcp <- tidy_stats$estimate[tidy_stats$term == "prcp"]
+  coef_tmin <- tidy_stats |>
+  filter(term == "tmin") |>
+  pull(estimate)
+
+  coef_prcp <- tidy_stats |>
+  filter(term == "prcp") |>
+  pull(estimate)
+  
+  # Handle cases where the product might be non-positive using log1p, which calculates log(1 + x)
   log_product <- ifelse(coef_tmin * coef_prcp > 0, log(coef_tmin * coef_prcp), NA)
   
   return(list(r_squared = r_squared, log_product = log_product))
@@ -271,4 +256,117 @@ combined_results <- rbind(r_squared_results, log_product_results) |>
 # Output the table with knitr::kable
 knitr::kable(caption = "95% Confidence Intervals and Estimates", combined_results)
 ```
+
+## Problem 3: Predictors for Children's Birthweight
+
+### Data Description
+
+```{r q3-import data}
+q3_raw <- read.csv(file = "https://p8105.com/data/birthweight.csv")
+```
+
+There are `r ncol(q3_raw)` variables and `r nrow(q3_raw)` observations in the dataset. Variable descriptions as below: 
+
+- *babysex*: baby’s sex (male = 1, female = 2)
+- *bhead*: baby’s head circumference at birth (cm)
+- *blength*: baby’s length at birth (cm)
+- *bwt*: baby’s birth weight (grams)
+- *delwt*: mother’s weight at delivery (pounds)
+- *fincome*: family monthly income (in hundreds, rounded)
+- *frace*: father’s race (1 = White, 2 = Black, 3 = Asian, 4 = Puerto Rican, 8 = Other, 9 = Unknown)
+- *gaweeks*: gestational age in weeks
+- *malform*: presence of malformations that could affect weight (0 = absent, 1 = present)
+- *menarche*: mother’s age at menarche (years)
+- *mheigth*: mother’s height (inches)
+- *momage*: mother’s age at delivery (years)
+- *mrace*: mother’s race (1 = White, 2 = Black, 3 = Asian, 4 = Puerto Rican, 8 = Other)
+- *parity*: number of live births prior to this pregnancy
+- *pnumlbw*: previous number of low birth weight babies
+- *pnumgsa*: number of prior small for gestational age babies
+- *ppbmi*: mother’s pre-pregnancy BMI
+- *ppwt*: mother’s pre-pregnancy weight (pounds)
+- *smoken*: average number of cigarettes smoked per day during pregnancy
+- *wtgain*: mother’s weight gain during pregnancy (pounds)
+
+```{r q3-data quality check}
+na_check <- sum(is.na(q3_raw)) # No NAs in the dataset
+
+data_class_check <- summary(q3_raw) # variables are either of class `int` or `num`.
+
+# checking for any missing entries within each column
+sapply(q3_raw, function(x) sum(is.na(x)))
+# No NAs found.
+
+# I was thinking some missing entries could have 0 as its placeholder. 
+sapply(q3_raw, function(x) sum(x == 0, na.rm = TRUE))
+# Variables with 0 in its entries seem reasonable. I would conclude that there is no missing entries in this dataset. 
+```
+
+In order to prepare the dataset for regression analysis, categorical variables need to be turned into class `factor`. Based on the variable descriptions, categorical variables include: *babysex*, *frace*, *malform*, *mrace*.
+
+```{r q3-data preparation for regression analysis}
+q3_for_analysis <- q3_raw |>
+  mutate(babysex = as.factor(babysex), 
+         frace = as.factor(frace), 
+         malform = as.factor(malform), 
+         mrace = as.factor(mrace))
+```
+
+### Model Fitting
+
+For model predictor selection, I will employ a data-driven model-building process in which step-wise predictor selection is performed. I will first create a full model that includes all predictors, then use `step()` function to add or drop predictors one at a time based on Akaike Information Criterion (AIC). 
+
+AIC is a measure of the relative quality of statistical models for a given set of data. It estimates the information loss when using a model to represent the process that generated the data. It deals with the trade-off between the goodness of fit of the model and the complexity of the model. A lower AIC value indicates a better model. AIC is calculated as: `AIC=2k−2ln(L)`, where `k` is the number of parameters in the model and `L` is the maximum value of the likelihood function for the model. During model selection, the goal is to minimize the AIC; the model with the lowest AIC is generally preferred.
+
+```{r q3-predictor selection}
+full_model <- lm(bwt ~ ., data = q3_for_analysis)
+stepwise_model <- step(full_model, direction = "both")
+summary(stepwise_model)
+tidy_summary <- tidy(stepwise_model)
+knitr::kable(tidy_summary, format = "html", caption = "Summary of Stepwise Model")
+```
+
+Based on the output, variables selected to the final model include: `r pull(tidy_summary, term)`. The model has a residual standard error of 272.3 on 4328 degrees of freedom, Multiple R-squared of  0.7181, and F-statistic of 848.1 on 13 and 4328 DF,  p-value: < 2.2e-16.
+
+The selected variables in the final model are statistically significant predictors of baby's birth weight. The high R-squared indicates the model explains a substantial portion of the variation in birth weight, suggesting a strong relationship between predictors and birth weight.
+
+### Model Diagnostics & Assumption Check
+
+Linear regression has many assumptions: 
+
+1. **Linearity:** check by plotting the fitted values against the residuals and see if the plot shows a random scatter.
+2. **Independence:** check using the Durbin-Watson test; values close to 2 suggest independence.
+3. **Homoscedasticity:** check using the same fitted values against residuals plot to see if there is a constant spread of residuals across all levels of fitted values.
+4. **Normal distribution of residuals:** A Q-Q plot of residuals will be used to assess whether the residuals are normally distributed. If points fall approximately along a straight line, the residuals are normally distributed.
+5. Additionally, with multiple predictors, potential **multicollinearity** also needs to be checked, as it can affect the stability and interpretation of regression coefficients. I will use the Variance Inflation Factor (VIF) and Durbin-Watson test to check for multicollinearity. 
+
+```{r}
+# Residuals vs Fitted Plot
+augmented_data <- q3_for_analysis |>
+  add_predictions(stepwise_model, var = "fitted_values") |>
+  add_residuals(stepwise_model, var = "residuals")
+
+ggplot(augmented_data, aes(x = fitted_values, y = residuals)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, color = "red") +
+  labs(x = "Fitted Values", y = "Residuals", title = "Residuals vs Fitted Values Plot") +
+  theme_minimal()
+
+# Normal Q-Q Plot
+qqnorm(residuals(stepwise_model))
+qqline(residuals(stepwise_model), col = "red")
+
+# VIF to check for multicollinearity
+vif(stepwise_model)
+
+# Durbin-Watson test for independence of errors
+dwtest(stepwise_model)
+```
+
+1. **Linearity:** The Residuals vs Fitted plot shows a random scatter of residuals across the range of fitted values, indicating linearity. 
+2. **Independence:** The Durbin-Watson test result (DW = 1.9238) is close to 2, which suggests that there is not strong evidence of autocorrelation in the residuals. However, the p-value is significant (0.005625), indicating some level of positive autocorrelation, although this may not be substantial enough to seriously violate the independence assumption.
+3. **Homoscedasticity:** The Residuals vs Fitted plot shows a relatively stable variance of residuals as fitted values increase. There is a slight funnel shape observed, but it is very minimal and should not be of severe concern.
+4. **Normal distribution of residuals:** Q-Q plot shows that the residuals aligns with the line overall with slight deviation at the ends, indicating that the residuals are approximately normally distributed with some potential extreme values, but are not warranting violation of residual normal distribution assumption. 
+5. **Multicollinearity:** VIF values greater than 10 warrants concerns of multicollinearity. None of the VIF values for my model are greater than 10, indicating no serious multicollinearity issues.
+
 
