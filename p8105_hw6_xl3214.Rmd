@@ -420,43 +420,52 @@ comparison_df <- tibble(
 comparison_df |> knitr::kable()
 ```
 
+- AIC and BIC: The stepwise model has the lowest AIC and BIC, suggesting it may be the best model among the three in terms of the trade-off between model fit and complexity.
+- Adjusted R-square: The stepwise model has the highest Adjusted R-squared, indicating it explains the highest proportion of variance in the birth weight after adjusting for the number of predictors.
+- Residual SE: The stepwise model has the smallest Residual SE, again suggesting a better fit.
+
+Overall, the stepwise model seems to perform better in terms of these metrics, but it's also the most complex model, which can sometimes lead to overfitting.
+
 **2. Comparison using cross-validation**
 
 ```{r q3-cross-validation-comparison}
 library(tidyverse)
 library(modelr)
 
-# Set a seed for reproducibility
-set.seed(123)
+# Step 1: Prepare the Cross-Validation Folds
+cv_df <- crossv_mc(q3_for_analysis, 100) |> 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble))
 
-# Create cross-validation folds
-cv_folds <- crossv_mc(q3_for_analysis, 100) # 100 Monte Carlo resamples
+# Step 2: Fit Models and Calculate RMSEs
+cv_df <- cv_df |> 
+  mutate(
+    main_mod = map(train, ~lm(bwt ~ blength + gaweeks, data = .)),
+    interaction_mod = map(train, ~lm(bwt ~ bhead * blength * babysex, data = .)),
+    stepwise_mod = map(train, ~lm(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + mheight + mrace + parity + ppwt + smoken, data = .))) |> 
+  mutate(
+    rmse_main = map2_dbl(main_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_interaction = map2_dbl(interaction_mod, test, ~rmse(model = .x, data = .y)),
+    rmse_stepwise = map2_dbl(stepwise_mod, test, ~rmse(model = .x, data = .y)))
 
-# Function to fit a model and return RMSE
-get_rmse <- function(model_formula, train_data, test_data) {
-  model <- lm(model_formula, data = train_data)
-  pred <- predict(model, newdata = test_data)
-  # Explicitly use data.frame method to access 'bwt' column
-  rmse <- sqrt(mean((test_data[["bwt"]] - pred)^2))
-  return(rmse)
-}
-
-# Cross-validate models
-rmse_length_ga <- map_dbl(cv_folds, ~get_rmse(bwt ~ blength + gaweeks, .x$train, .x$test))
-rmse_head_length_sex_interactions <- map_dbl(cv_folds, ~get_rmse(bwt ~ bhead * blength * babysex, .x$train, .x$test))
-rmse_stepwise <- map_dbl(cv_folds, ~get_rmse(bwt ~ babysex + bhead + blength + delwt + fincome + gaweeks + mheight + mrace + parity + ppwt + smoken, .x$train, .x$test))
-
-# Calculate mean RMSE for each model
-mean_rmse_length_ga <- mean(rmse_length_ga)
-mean_rmse_head_length_sex_interactions <- mean(rmse_head_length_sex_interactions)
-mean_rmse_stepwise <- mean(rmse_stepwise)
-
-# Output Comparison Table
-comparison_RMSE_df <- tibble(
-  Model = c("Length + GA", "Head + Length + Sex + Interactions", "Current Stepwise Model"),
-  Mean_RMSE = c(mean_rmse_length_ga, mean_rmse_head_length_sex_interactions, mean_rmse_stepwise)
-)
-
-comparison_RMSE_df |> knitr::kable()
+# Step 3: Plot Prediction Error Distributions
+cv_df |> 
+  select(starts_with("rmse")) |> 
+  pivot_longer(
+    everything(),
+    names_to = "model", 
+    values_to = "rmse",
+    names_prefix = "rmse_") |> 
+  mutate(model = fct_inorder(model)) |> 
+  ggplot(aes(x = model, y = rmse)) + geom_violin()
 ```
 
+- The stepwise model's violin has the thickest part lowest on the RMSE axis, suggesting that it typically achieves a lower prediction error.
+- The interaction model and the stepwise model have a similar range, which is narrower than the main effect model's range, indicating they are generally more consistent.
+- The violins for all three models appear reasonably symmetrical, suggesting that none of the models have a bias toward particularly high or low errors in their predictions. Additionally, the tails of violins are short for all models, which implies that extreme errors are not common for any model.
+- The stepwise model has the lowest RMSE overall, with the bulk of its distribution being the lowest among the three models. This indicates that it generally produces the most accurate predictions. However, the difference between the stepwise and interaction models is not substantial.
+
+**Summary**
+
+The stepwise model shows the best predictive performance according to the cross-validation RMSE. However, the interaction model is close behind and may be preferable if model simplicity and interpretability are important. The main effect model, while the simplest, is outperformed by the other two models and may be too simplistic for accurately capturing the relationship in your data.
